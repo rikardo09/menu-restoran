@@ -1,0 +1,2407 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>WebAR Digital Menu</title>
+
+  <!-- ─── CDN Dependencies ─── -->
+  <!-- PENTING: gunakan versi yang sudah teruji kompatibel -->
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    /* ═══════════════════════════════════════════
+       RESET & BASE
+    ═══════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold:       #f5c842;
+      --gold-dark:  #c9991a;
+      --deep:       #0d0d14;
+      --panel-bg:   rgba(10, 10, 20, 0.82);
+      --glass:      rgba(255, 255, 255, 0.06);
+      --border:     rgba(245, 200, 66, 0.35);
+      --radius:     18px;
+      --font-title: 'Playfair Display', Georgia, serif;
+      --font-body:  'DM Sans', 'Segoe UI', sans-serif;
+    }
+
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500&display=swap');
+
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: transparent;
+      font-family: var(--font-body);
+      color: #fff;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ═══════════════════════════════════════════
+       LOADING SCREEN
+    ═══════════════════════════════════════════ */
+    #loading-screen {
+      position: fixed; inset: 0; z-index: 999;
+      background: var(--deep);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 28px;
+      transition: opacity 0.6s ease, visibility 0.6s ease;
+    }
+    #loading-screen.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .loading-logo {
+      font-family: var(--font-title);
+      font-size: clamp(2rem, 8vw, 3.2rem);
+      color: var(--gold);
+      letter-spacing: 0.04em;
+      text-align: center;
+    }
+    .loading-logo span { color: #fff; }
+
+    .loading-subtitle {
+      font-size: 0.8rem;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.45);
+    }
+
+    /* Spinner */
+    .spinner {
+      width: 56px; height: 56px;
+      border: 3px solid rgba(245, 200, 66, 0.15);
+      border-top-color: var(--gold);
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-hint {
+      font-size: 0.82rem;
+      color: rgba(255,255,255,0.35);
+      text-align: center;
+      padding: 0 32px;
+      line-height: 1.6;
+    }
+
+    /* Progress bar */
+    .progress-wrap {
+      width: 180px;
+      height: 3px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--gold);
+      border-radius: 99px;
+      transition: width 0.3s ease;
+    }
+
+    /* ═══════════════════════════════════════════
+       A-FRAME SCENE
+    ═══════════════════════════════════════════ */
+    #ar-scene {
+      position: fixed; inset: 0; z-index: 1;
+    }
+
+    /* MindAR mengelola video & canvas-nya sendiri —
+       jangan override z-index atau transform di sini */
+    #ar-scene canvas {
+      position: fixed !important;
+      top: 0 !important; left: 0 !important;
+      width: 100% !important; height: 100% !important;
+    }
+
+    /* ═══════════════════════════════════════════
+       OVERLAY UI — wrapper above the camera
+    ═══════════════════════════════════════════ */
+    #ui-overlay {
+      position: fixed; inset: 0; z-index: 10;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px 14px 20px;
+    }
+
+    /* ── Header bar ── */
+    #header {
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+    }
+
+    .brand {
+      font-family: var(--font-title);
+      font-size: 1rem;
+      color: var(--gold);
+      letter-spacing: 0.03em;
+    }
+
+    #tracker-status {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.68rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.5);
+    }
+    .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #555;
+      transition: background 0.4s;
+    }
+    .dot.found  { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+    .dot.lost   { background: #f87171; }
+
+    /* ── Bottom panel ── */
+    #bottom-panel {
+      pointer-events: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    /* Menu Info Card — lebih ringkas */
+    #menu-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      padding: 12px 14px;
+    }
+
+    .menu-card-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .menu-info h2 {
+      font-family: var(--font-title);
+      font-size: 1.05rem;
+      color: #fff;
+      margin-bottom: 2px;
+    }
+    .menu-info .menu-desc {
+      font-size: 0.72rem;
+      color: rgba(255,255,255,0.48);
+      line-height: 1.4;
+      max-width: 200px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .menu-price {
+      font-family: var(--font-title);
+      font-size: 1.2rem;
+      color: var(--gold);
+      white-space: nowrap;
+    }
+
+    /* Dot pagination — lebih kecil */
+    .dots-row {
+      display: flex;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .page-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.2);
+      transition: all 0.3s;
+    }
+    .page-dot.active {
+      width: 16px;
+      border-radius: 3px;
+      background: var(--gold);
+    }
+
+    /* menu-counter disembunyikan — cukup pakai dots */
+    #card-counter {
+      margin-top: 6px;
+      font-size: 0.7rem;
+      letter-spacing: 0.06em;
+      color: rgba(255,255,255,0.4);
+    }
+
+    /* ── Food selector pills ── */
+    #food-selector {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+      padding-bottom: 2px;
+    }
+    #food-selector::-webkit-scrollbar { display: none; }
+
+    .food-btn {
+      flex-shrink: 0;
+      padding: 6px 13px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--glass);
+      color: rgba(255,255,255,0.65);
+      font-family: var(--font-body);
+      font-size: 0.75rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.22s;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      white-space: nowrap;
+    }
+    .food-btn:active  { transform: scale(0.95); }
+    .food-btn.active {
+      background: var(--gold);
+      border-color: var(--gold);
+      color: var(--deep);
+      font-weight: 700;
+      box-shadow: 0 3px 14px rgba(245,200,66,0.35);
+    }
+
+    /* ── Control row: zoom + nav dalam satu baris ── */
+    #control-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Zoom inline */
+    #zoom-inline {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--panel-bg);
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: 6px 10px;
+      backdrop-filter: blur(10px);
+      flex-shrink: 0;
+    }
+    .zoom-btn {
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      border: none;
+      background: transparent;
+      color: rgba(255,255,255,0.8);
+      font-size: 1.1rem;
+      line-height: 1;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.18s;
+    }
+    .zoom-btn:active { color: var(--gold); transform: scale(0.9); }
+    #zoom-track {
+      width: 60px;
+      height: 3px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 99px;
+      position: relative;
+      cursor: pointer;
+    }
+    #zoom-fill {
+      height: 100%;
+      border-radius: 99px;
+      background: var(--gold);
+      width: 50%;
+      transition: width 0.12s ease;
+    }
+    #zoom-thumb {
+      position: absolute;
+      top: 50%; transform: translate(-50%, -50%);
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 6px rgba(245,200,66,0.5);
+      left: 50%;
+      transition: left 0.12s ease;
+      cursor: grab;
+    }
+
+    /* Nav buttons — lebih compact */
+    .nav-btn {
+      flex: 1;
+      padding: 11px 8px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--glass);
+      color: #fff;
+      font-family: var(--font-body);
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.22s;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+    .nav-btn:active { transform: scale(0.96); }
+    .nav-btn.primary {
+      background: var(--gold);
+      border-color: var(--gold);
+      color: var(--deep);
+      font-weight: 700;
+      box-shadow: 0 3px 16px rgba(245,200,66,0.3);
+    }
+    .arrow { font-size: 1rem; }
+
+    /* ── Scan hint (shown when marker not found) ── */
+    #scan-hint {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      pointer-events: none;
+      transition: opacity 0.5s;
+    }
+    #scan-hint.hidden { opacity: 0; }
+
+    .scan-frame {
+      width: 220px; height: 220px;
+      border-radius: 24px;
+      border: 2px solid rgba(245,200,66,0.5);
+      position: relative;
+      animation: pulse-border 2s ease-in-out infinite;
+    }
+    @keyframes pulse-border {
+      0%, 100% { border-color: rgba(245,200,66,0.3); }
+      50%       { border-color: rgba(245,200,66,0.85); }
+    }
+
+    /* Corner accents */
+    .scan-frame::before, .scan-frame::after {
+      content: '';
+      position: absolute;
+      width: 28px; height: 28px;
+      border-color: var(--gold);
+      border-style: solid;
+    }
+    .scan-frame::before {
+      top: -2px; left: -2px;
+      border-width: 3px 0 0 3px;
+      border-radius: 8px 0 0 0;
+    }
+    .scan-frame::after {
+      bottom: -2px; right: -2px;
+      border-width: 0 3px 3px 0;
+      border-radius: 0 0 8px 0;
+    }
+
+    .scan-text {
+      font-size: 0.82rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.55);
+      text-align: center;
+    }
+
+    /* ── Zoom controls ── */
+    #zoom-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .zoom-btn {
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--glass);
+      color: #fff;
+      font-size: 1.5rem;
+      line-height: 1;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: all 0.2s;
+      flex-shrink: 0;
+    }
+    .zoom-btn:active { transform: scale(0.9); background: var(--gold); color: var(--deep); }
+
+    #zoom-track {
+      flex: 1;
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 99px;
+      position: relative;
+      cursor: pointer;
+    }
+    #zoom-fill {
+      height: 100%;
+      border-radius: 99px;
+      background: var(--gold);
+      width: 50%; /* default tengah */
+      transition: width 0.15s ease;
+    }
+    #zoom-thumb {
+      position: absolute;
+      top: 50%; transform: translate(-50%, -50%);
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 8px rgba(245,200,66,0.6);
+      left: 50%;
+      transition: left 0.15s ease;
+      cursor: grab;
+    }
+    #zoom-label {
+      font-size: 0.7rem;
+      color: rgba(255,255,255,0.4);
+      letter-spacing: 0.08em;
+      text-align: center;
+      margin-top: 2px;
+    }
+
+    /* ═══════════════════════════════════════════
+       SHOPPING CART
+    ═══════════════════════════════════════════ */
+
+    /* ── Ikon keranjang di header ── */
+    #cart-btn {
+      position: relative;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 6px 10px;
+      cursor: pointer;
+      color: #fff;
+      font-size: 1.15rem;
+      display: flex; align-items: center; gap: 6px;
+      transition: all 0.2s;
+      backdrop-filter: blur(10px);
+    }
+    #cart-btn:active { transform: scale(0.93); }
+    #cart-btn.has-item {
+      border-color: var(--gold);
+      background: rgba(245,200,66,0.12);
+    }
+    #cart-badge {
+      background: var(--gold);
+      color: var(--deep);
+      font-size: 0.65rem;
+      font-weight: 700;
+      border-radius: 99px;
+      padding: 1px 6px;
+      min-width: 18px;
+      text-align: center;
+      display: none;
+    }
+    #cart-badge.show { display: inline-block; }
+
+    /* ── Tombol "Tambah ke Keranjang" di info card ── */
+    #btn-add-cart {
+      width: 100%;
+      margin-top: 10px;
+      padding: 11px;
+      border-radius: 12px;
+      border: none;
+      background: var(--gold);
+      color: var(--deep);
+      font-family: var(--font-body);
+      font-size: 0.88rem;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: all 0.2s;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    #btn-add-cart:active { transform: scale(0.97); filter: brightness(0.9); }
+    #btn-add-cart.added {
+      background: #4ade80;
+      color: #052e16;
+    }
+    #btn-add-cart:disabled {
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.35);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ── Modal overlay ── */
+    #cart-modal {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,0.65);
+      backdrop-filter: blur(6px);
+      display: flex; align-items: flex-end;
+      opacity: 0; visibility: hidden;
+      transition: opacity 0.3s, visibility 0.3s;
+    }
+    #cart-modal.open {
+      opacity: 1; visibility: visible;
+    }
+
+    /* ── Sheet panel ── */
+    #cart-sheet {
+      width: 100%;
+      max-height: 85vh;
+      background: #13131f;
+      border-radius: 24px 24px 0 0;
+      border-top: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      transform: translateY(100%);
+      transition: transform 0.35s cubic-bezier(0.32,0.72,0,1);
+      overflow: hidden;
+    }
+    #cart-modal.open #cart-sheet { transform: translateY(0); }
+
+    /* drag handle */
+    .sheet-handle {
+      width: 36px; height: 4px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 99px;
+      margin: 14px auto 0;
+      flex-shrink: 0;
+    }
+
+    /* sheet header */
+    .sheet-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      flex-shrink: 0;
+    }
+    .sheet-title {
+      font-family: var(--font-title);
+      font-size: 1.15rem;
+      color: #fff;
+    }
+    #cart-close {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 8px;
+      color: rgba(255,255,255,0.6);
+      font-size: 1rem;
+      width: 32px; height: 32px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s;
+    }
+    #cart-close:active { background: rgba(255,255,255,0.12); }
+
+    /* scrollable item list */
+    #cart-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 16px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.1) transparent;
+    }
+
+    /* empty state */
+    #cart-empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: rgba(255,255,255,0.3);
+      font-size: 0.9rem;
+      line-height: 1.8;
+    }
+    #cart-empty .empty-icon { font-size: 2.5rem; display: block; margin-bottom: 8px; }
+
+    /* cart item row */
+    .cart-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .cart-item:last-child { border-bottom: none; }
+    .cart-item-info { flex: 1; }
+    .cart-item-name {
+      font-size: 0.88rem;
+      font-weight: 500;
+      color: #fff;
+      margin-bottom: 3px;
+    }
+    .cart-item-price {
+      font-size: 0.78rem;
+      color: var(--gold);
+    }
+
+    /* qty control */
+    .qty-control {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .qty-btn {
+      width: 28px; height: 28px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--glass);
+      color: #fff;
+      font-size: 1rem;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s;
+    }
+    .qty-btn:active { background: var(--gold); color: var(--deep); }
+    .qty-num {
+      font-size: 0.9rem;
+      font-weight: 600;
+      min-width: 20px;
+      text-align: center;
+    }
+
+    /* footer checkout area */
+    #cart-footer {
+      padding: 14px 16px 24px;
+      border-top: 1px solid rgba(255,255,255,0.07);
+      flex-shrink: 0;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+
+    .total-row {
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .total-label {
+      font-size: 0.82rem;
+      color: rgba(255,255,255,0.5);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    #cart-total {
+      font-family: var(--font-title);
+      font-size: 1.3rem;
+      color: var(--gold);
+    }
+
+    /* nomor meja input */
+    #input-meja {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.05);
+      color: #fff;
+      font-family: var(--font-body);
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    #input-meja::placeholder { color: rgba(255,255,255,0.3); }
+    #input-meja:focus { border-color: var(--gold); }
+
+    /* tombol checkout */
+    #btn-checkout {
+      width: 100%;
+      padding: 14px;
+      border-radius: var(--radius);
+      border: none;
+      background: var(--gold);
+      color: var(--deep);
+      font-family: var(--font-body);
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: all 0.2s;
+    }
+    #btn-checkout:active { filter: brightness(0.9); transform: scale(0.98); }
+    #btn-checkout:disabled {
+      background: rgba(255,255,255,0.1);
+      color: rgba(255,255,255,0.3);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ── Snackbar notif "ditambahkan" ── */
+    #snackbar {
+      position: fixed;
+      bottom: 100px; left: 50%; transform: translateX(-50%) translateY(20px);
+      z-index: 300;
+      background: #1e1e30;
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      padding: 10px 20px;
+      font-size: 0.82rem;
+      color: #fff;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.25s, transform 0.25s;
+      pointer-events: none;
+    }
+    #snackbar.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* ═══════════════════════════════════════════
+       SWEETALERT2 CUSTOM THEME
+    ═══════════════════════════════════════════ */
+    .swal-popup {
+      border: 1px solid rgba(245,200,66,0.3) !important;
+      border-radius: 20px !important;
+      font-family: var(--font-body) !important;
+    }
+    .swal-title {
+      font-family: var(--font-title) !important;
+      color: #fff !important;
+      font-size: 1.2rem !important;
+    }
+    .swal-html {
+      color: rgba(255,255,255,0.75) !important;
+    }
+    .swal-confirm {
+      border-radius: 10px !important;
+      font-family: var(--font-body) !important;
+      font-weight: 700 !important;
+      color: #0d0d14 !important;
+      padding: 10px 28px !important;
+    }
+    .swal-cancel {
+      border-radius: 10px !important;
+      font-family: var(--font-body) !important;
+      color: rgba(255,255,255,0.7) !important;
+      border: 1px solid rgba(255,255,255,0.15) !important;
+      padding: 10px 20px !important;
+    }
+    .swal2-icon { margin: 12px auto 8px !important; }
+
+    /* ── Tombol "Lihat 3D" di dalam cart item ── */
+    .btn-view3d {
+      flex-shrink: 0;
+      padding: 5px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(245,200,66,0.1);
+      color: var(--gold);
+      font-family: var(--font-body);
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .btn-view3d:active {
+      background: var(--gold);
+      color: var(--deep);
+      transform: scale(0.95);
+    }
+    .btn-view3d.viewing {
+      background: var(--gold);
+      color: var(--deep);
+    }
+
+    /* ── Tombol "Kembali ke Keranjang" di layar AR ── */
+    #btn-back-cart {
+      position: fixed;
+      top: 80px;
+      left: 16px;
+      z-index: 20;
+      display: none;        /* tersembunyi saat tidak ada mode preview */
+      align-items: center;
+      gap: 6px;
+      padding: 9px 14px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--panel-bg);
+      color: #fff;
+      font-family: var(--font-body);
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: all 0.2s;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+    #btn-back-cart.visible {
+      display: flex;
+    }
+    #btn-back-cart:active { transform: scale(0.95); }
+
+    /* ── Label nama item yang sedang di-preview ── */
+    #preview-label {
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: none;
+      padding: 6px 16px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--panel-bg);
+      color: rgba(255,255,255,0.7);
+      font-size: 0.75rem;
+      letter-spacing: 0.06em;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      white-space: nowrap;
+    }
+    #preview-label.visible { display: block; }
+
+    /* ── Tombol "Lihat Semua 3D" di cart footer ── */
+    #btn-view-all-3d {
+      width: 100%;
+      padding: 11px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(245,200,66,0.08);
+      color: var(--gold);
+      font-family: var(--font-body);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.03em;
+      transition: all 0.2s;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+    }
+    #btn-view-all-3d:active { background: rgba(245,200,66,0.2); transform: scale(0.98); }
+    #btn-view-all-3d:disabled {
+      opacity: 0.3; cursor: not-allowed; transform: none;
+    }
+
+    /* ── Tombol "Tutup Preview" di layar AR multi-view ── */
+    #btn-close-multiview {
+      position: fixed;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: none;
+      align-items: center;
+      gap: 7px;
+      padding: 12px 24px;
+      border-radius: 99px;
+      border: 1px solid rgba(255,100,100,0.4);
+      background: rgba(30, 10, 10, 0.85);
+      color: #ff8080;
+      font-family: var(--font-body);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    #btn-close-multiview.visible {
+      display: flex;
+    }
+    #btn-close-multiview:active { transform: translateX(-50%) scale(0.96); }
+
+    /* ── Label multi-view ── */
+    #multiview-label {
+      position: fixed;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      display: none;
+      padding: 6px 18px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: var(--panel-bg);
+      color: rgba(255,255,255,0.65);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      backdrop-filter: blur(12px);
+      white-space: nowrap;
+    }
+    #multiview-label.visible { display: block; }
+
+    /* ── Rotate hint ── */
+    #rotate-hint {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 8;
+      background: rgba(10,10,20,0.75);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px 18px;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.7);
+      letter-spacing: 0.06em;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.4s;
+      white-space: nowrap;
+    }
+    #rotate-hint.show { opacity: 1; }
+
+    /* ── Auto-rotate toggle button ── */
+    #btn-autorotate {
+      position: fixed;
+      top: 80px;
+      right: 16px;
+      z-index: 20;
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--glass);
+      color: rgba(255,255,255,0.7);
+      font-size: 1rem;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: all 0.2s;
+    }
+    #btn-autorotate.paused {
+      background: rgba(245,200,66,0.15);
+      border-color: var(--gold);
+      color: var(--gold);
+    }
+    #btn-autorotate:active { transform: scale(0.9); }
+
+    /* model-swap animation helper */
+    @keyframes fadeScale {
+      from { opacity: 0; transform: scale(0.85); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    .model-in { animation: fadeScale 0.35s ease forwards; }
+
+    /* ═══════════════════════════════════════════
+       RESPONSIVE: phones ≤ 480px
+    ═══════════════════════════════════════════ */
+    @media (max-width: 480px) {
+      .menu-info .menu-desc { max-width: 170px; }
+      .menu-price { font-size: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ╔══════════════════════════════════════╗
+     ║         LOADING SCREEN               ║
+     ╚══════════════════════════════════════╝ -->
+<div id="loading-screen">
+  <div class="loading-logo">AR<span>Menu</span></div>
+  <div class="loading-subtitle">Digital Experience</div>
+  <div class="spinner"></div>
+  <div class="progress-wrap">
+    <div class="progress-bar" id="progress-bar"></div>
+  </div>
+  <p class="loading-hint">Memuat kamera & aset AR…<br>Izinkan akses kamera saat diminta.</p>
+</div>
+
+
+<!-- ╔══════════════════════════════════════╗
+     ║         A-FRAME AR SCENE             ║
+     ╚══════════════════════════════════════╝ -->
+<a-scene
+  id="ar-scene"
+  mindar-image="imageTargetSrc: targets.mind; autoStart: true; uiLoading: no; uiScanning: no; uiError: no;"
+  color-space="sRGB"
+  renderer="colorManagement: true; physicallyCorrectLights: true; antialias: true"
+  vr-mode-ui="enabled: false"
+  device-orientation-permission-ui="enabled: false"
+  loading-screen="dotsColor: #f5c842; backgroundColor: #0d0d14"
+>
+  <!--
+    Model 3D dimuat langsung via URL di JavaScript (switchMenu),
+    bukan di-preload di sini. Ini menghindari semua masalah CORS
+    dan timeout yang sering terjadi dengan <a-assets>.
+  -->
+
+  <!-- Camera -->
+  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+
+  <!-- MindAR Image Target (anchor 0 = first target in .mind file) -->
+  <a-entity mindar-image-target="targetIndex: 0">
+
+    <!--
+      ── ACTIVE 3D MODEL ENTITY ──
+      id="ar-model" adalah entitas yang akan kita ganti src-nya via JavaScript.
+      - rotation="-90 0 0"  : sesuaikan jika model Anda menghadap ke arah yang salah.
+      - scale="0.1 0.1 0.1" : sesuaikan skala agar proporsional di atas marker.
+      - animation           : auto-rotate 360° sepanjang sumbu Y.
+    -->
+    <a-entity
+      id="ar-model"
+      
+      position="0 0 0.1"
+      scale="0.07 0.07 0.07"
+      rotation="-90 0 0"
+      animation="property: rotation; to: -90 360 0; loop: true; dur: 8000; easing: linear"
+    ></a-entity>
+
+  </a-entity>
+</a-scene>
+
+
+<!-- ╔══════════════════════════════════════╗
+     ║         OVERLAY UI                   ║
+     ╚══════════════════════════════════════╝ -->
+<div id="ui-overlay">
+
+  <!-- Header -->
+  <div id="header">
+    <div class="brand">✦ AR Menu</div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div id="tracker-status">
+        <div class="dot" id="track-dot"></div>
+        <span id="track-label">Mencari marker…</span>
+      </div>
+      <!-- Ikon keranjang -->
+      <button id="cart-btn" onclick="openCart()" aria-label="Buka keranjang">
+        🛒 <span id="cart-badge"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Bottom Panel -->
+  <div id="bottom-panel">
+
+    <!-- Food tab selector -->
+    <div id="food-selector" role="tablist" aria-label="Pilih menu"></div>
+
+    <!-- Info card -->
+    <div id="menu-card">
+      <div class="menu-card-inner">
+        <div class="menu-info">
+          <h2 id="card-name">—</h2>
+          <p class="menu-desc" id="card-desc">—</p>
+          <div class="dots-row" id="dots-row"></div>
+          <div class="menu-counter" id="card-counter"></div>
+        </div>
+        <div class="menu-price" id="card-price">—</div>
+      </div>
+      <button id="btn-add-cart" onclick="addToCart()">🛒 Tambah ke Keranjang</button>
+    </div>
+
+    <!-- Zoom + Navigasi dalam satu baris -->
+    <div id="control-row">
+      <!-- Zoom inline pill -->
+      <div id="zoom-inline">
+        <button class="zoom-btn" id="btn-zoom-out" aria-label="Perkecil">−</button>
+        <div id="zoom-track">
+          <div id="zoom-fill"></div>
+          <div id="zoom-thumb"></div>
+        </div>
+        <button class="zoom-btn" id="btn-zoom-in" aria-label="Perbesar">+</button>
+      </div>
+
+      <!-- Prev / Next -->
+      <button class="nav-btn" id="btn-prev" aria-label="Menu sebelumnya">
+        <span class="arrow">←</span> Prev
+      </button>
+      <button class="nav-btn primary" id="btn-next" aria-label="Menu berikutnya">
+        Next <span class="arrow">→</span>
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Scan hint overlay -->
+<div id="scan-hint">
+  <div class="scan-frame"></div>
+  <p class="scan-text">Arahkan kamera ke marker menu</p>
+</div>
+
+<!-- Rotate hint (muncul sebentar saat pertama kali drag) -->
+<div id="rotate-hint">👆 Geser untuk memutar model</div>
+
+<!-- Tombol pause/play auto-rotate -->
+<button id="btn-autorotate" title="Pause/Play auto-rotate">⟳</button>
+
+<!-- Tombol kembali ke keranjang (muncul saat mode preview 3D dari keranjang) -->
+<button id="btn-back-cart" onclick="backToCart()">← Kembali ke Keranjang</button>
+
+<!-- Label nama item yang sedang dipreview -->
+<div id="preview-label"></div>
+
+<!-- Label multi-view mode -->
+<div id="multiview-label">✨ Semua Pesanan dalam 3D</div>
+
+<!-- Tombol Tutup Preview multi-view -->
+<button id="btn-close-multiview" onclick="closeMultiView()">✕ Tutup AR</button>
+
+<!-- ╔══════════════════════════════════════╗
+     ║       SHOPPING CART MODAL            ║
+     ╚══════════════════════════════════════╝ -->
+<div id="cart-modal" onclick="handleModalBackdrop(event)">
+  <div id="cart-sheet">
+
+    <div class="sheet-handle"></div>
+
+    <!-- Header sheet -->
+    <div class="sheet-header">
+      <div class="sheet-title">🛒 Keranjang Pesanan</div>
+      <button id="cart-close" onclick="closeCart()">✕</button>
+    </div>
+
+    <!-- Daftar item -->
+    <div id="cart-list">
+      <div id="cart-empty">
+        <span class="empty-icon">🍽️</span>
+        Keranjang masih kosong.<br>Pilih menu dan tap "Tambah ke Keranjang".
+      </div>
+    </div>
+
+    <!-- Footer: total + meja + checkout -->
+    <div id="cart-footer">
+      <div class="total-row">
+        <span class="total-label">Total</span>
+        <span id="cart-total">Rp 0</span>
+      </div>
+
+      <!-- Tombol tunggal Lihat Semua Pesanan AR -->
+      <button id="btn-view-all-3d" onclick="viewAll3D()" disabled>
+        📷 Lihat Semua Pesanan (AR)
+      </button>
+
+      <input
+        type="text"
+        id="input-meja"
+        placeholder="Nomor Meja (contoh: Meja 5)"
+        inputmode="numeric"
+      />
+
+      <button id="btn-checkout" onclick="checkout()" disabled>
+        ✅ Selesaikan Pesanan
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Snackbar notifikasi -->
+<div id="snackbar"></div>
+
+
+<!-- ╔══════════════════════════════════════╗
+     ║         JAVASCRIPT                   ║
+     ╚══════════════════════════════════════╝ -->
+<script>
+  /* ═══════════════════════════════════════════════════════
+     1. DATA MENU
+     modelSrc : URL langsung ke file .glb (BUKAN id asset).
+                Metode ini lebih andal — model dimuat on-demand
+                saat tombol diklik, bukan semua sekaligus di awal.
+  ═══════════════════════════════════════════════════════ */
+  let menuItems = [];
+  /* ═══════════════════════════════════════════════════════
+     2. STATE
+  ═══════════════════════════════════════════════════════ */
+  let currentIndex = 0;
+  let markerFound  = false;
+  let sceneReady   = false;
+
+  /* ═══════════════════════════════════════════════════════
+     3. DOM REFERENCES
+  ═══════════════════════════════════════════════════════ */
+  const arModel       = document.getElementById("ar-model");
+  const cardName      = document.getElementById("card-name");
+  const cardDesc      = document.getElementById("card-desc");
+  const cardPrice     = document.getElementById("card-price");
+  const cardCounter   = document.getElementById("card-counter");
+  const dotsRow       = document.getElementById("dots-row");
+  const foodSelector  = document.getElementById("food-selector");
+  const trackDot      = document.getElementById("track-dot");
+  const trackLabel    = document.getElementById("track-label");
+  const scanHint      = document.getElementById("scan-hint");
+  const btnPrev       = document.getElementById("btn-prev");
+  const btnNext       = document.getElementById("btn-next");
+  const loadingScreen = document.getElementById("loading-screen");
+  const loadingHint   = document.querySelector(".loading-hint");
+  const progressBar   = document.getElementById("progress-bar");
+
+  /* ═══════════════════════════════════════════════════════
+     4. SWITCH MENU
+  ═══════════════════════════════════════════════════════ */
+
+  /* Update badge stok & status tombol "Tambah ke Keranjang" */
+  function updateStockUI(item) {
+    btnAddCart.classList.remove("added");
+
+    if (item.stok <= 0) {
+      btnAddCart.disabled    = true;
+      btnAddCart.innerHTML   = "❌ Stok Habis";
+      cardCounter.textContent = `${currentIndex + 1} dari ${menuItems.length} · Stok habis`;
+    } else {
+      btnAddCart.disabled    = false;
+      btnAddCart.innerHTML   = "🛒 Tambah ke Keranjang";
+      cardCounter.textContent = `${currentIndex + 1} dari ${menuItems.length} · Stok: ${item.stok}`;
+    }
+  }
+
+  /* Update hanya data card & tombol aktif, TANPA menampilkan model */
+  function switchMenuDataOnly(index) {
+    currentIndex = (index + menuItems.length) % menuItems.length;
+    const item   = menuItems[currentIndex];
+
+    cardName.textContent    = item.name;
+    cardDesc.textContent    = item.desc;
+    cardPrice.textContent   = item.price;
+    updateStockUI(item);
+
+    document.querySelectorAll(".food-btn").forEach((btn, i) => {
+      btn.classList.toggle("active", i === currentIndex);
+      btn.setAttribute("aria-selected", i === currentIndex ? "true" : "false");
+    });
+    document.querySelectorAll(".page-dot").forEach((dot, i) => {
+      dot.classList.toggle("active", i === currentIndex);
+    });
+  }
+
+  /* switchMenu penuh — tampilkan model dan keluar dari previewMode */
+  function switchMenu(index) {
+    // Jika sedang di previewMode, keluar dulu
+    if (previewMode) {
+      previewMode = false;
+      btnBackCart.classList.remove("visible");
+      previewLabel.classList.remove("visible");
+      document.getElementById("bottom-panel").style.opacity      = "1";
+      document.getElementById("bottom-panel").style.pointerEvents = "auto";
+    }
+
+    currentIndex = (index + menuItems.length) % menuItems.length;
+    const item   = menuItems[currentIndex];
+
+    // Tampilkan model 3D
+    showModelFromItem(item);
+
+    // Update info card & tombol
+    cardName.textContent    = item.name;
+    cardDesc.textContent    = item.desc;
+    cardPrice.textContent   = item.price;
+    updateStockUI(item);
+
+    document.querySelectorAll(".food-btn").forEach((btn, i) => {
+      btn.classList.toggle("active", i === currentIndex);
+      btn.setAttribute("aria-selected", i === currentIndex ? "true" : "false");
+    });
+    document.querySelectorAll(".page-dot").forEach((dot, i) => {
+      dot.classList.toggle("active", i === currentIndex);
+    });
+
+    console.log(`[Menu] Ganti ke: ${item.name} | src: ${item.modelSrc}`);
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     5. BUILD UI BUTTONS
+  ═══════════════════════════════════════════════════════ */
+  function buildFoodButtons() {
+    foodSelector.innerHTML = "";
+    dotsRow.innerHTML = "";
+
+    menuItems.forEach((item, i) => {
+      const btn = document.createElement("button");
+      btn.className = "food-btn" + (i === 0 ? " active" : "");
+      btn.textContent = item.name.split(" ")[0];
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-selected", i === 0 ? "true" : "false");
+      btn.addEventListener("click", () => switchMenu(i));
+      foodSelector.appendChild(btn);
+
+      const dot = document.createElement("div");
+      dot.className = "page-dot" + (i === 0 ? " active" : "");
+      dotsRow.appendChild(dot);
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     6. PREV / NEXT
+  ═══════════════════════════════════════════════════════ */
+  btnPrev.addEventListener("click", () => switchMenu(currentIndex - 1));
+  btnNext.addEventListener("click", () => switchMenu(currentIndex + 1));
+
+  /* ═══════════════════════════════════════════════════════
+     7. MARKER TRACKING — dipasang setelah scene loaded
+  ═══════════════════════════════════════════════════════ */
+  function attachMarkerEvents() {
+    const target = document.querySelector("[mindar-image-target]");
+    if (!target) {
+      console.warn("[MindAR] Entity target tidak ditemukan.");
+      return;
+    }
+
+    target.addEventListener("targetFound", () => {
+      markerFound = true;
+      trackDot.className     = "dot found";
+      trackLabel.textContent = "Marker terdeteksi ✓";
+      scanHint.classList.add("hidden");
+      console.log("[MindAR] ✅ Target FOUND");
+    });
+
+    target.addEventListener("targetLost", () => {
+      markerFound = false;
+      trackDot.className     = "dot lost";
+      trackLabel.textContent = "Marker hilang";
+      scanHint.classList.remove("hidden");
+      console.log("[MindAR] ❌ Target LOST");
+    });
+
+    console.log("[MindAR] ✅ Event listener terpasang.");
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     8. PROGRESS BAR ANIMATION
+  ═══════════════════════════════════════════════════════ */
+  function animateProgress(targetPct, duration) {
+    return new Promise(resolve => {
+      const start = performance.now();
+      const from  = parseFloat(progressBar.style.width) || 0;
+      const diff  = targetPct - from;
+      (function step(now) {
+        const t = Math.min((now - start) / duration, 1);
+        progressBar.style.width = (from + diff * t) + "%";
+        t < 1 ? requestAnimationFrame(step) : resolve();
+      })(performance.now());
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     FETCH DATA MENU DARI SUPABASE
+  ═══════════════════════════════════════════════════════ */
+  async function fetchDynamicMenu() {
+    console.log("[App] 1. Menarik data menu dari Supabase...");
+    try {
+      const { data, error } = await dbClient
+        .from('menu')
+        .select('*')
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+      
+      if (!data || data.length === 0) {
+        console.warn("[App] ⚠️ Data menu kosong di database.");
+        menuItems = [];
+        return;
+      }
+
+      console.log(`[App] 2. Berhasil ditarik: ${data.length} menu.`);
+      
+      // Map data & tambahkan fallback agar tidak crash jika ada data kolom yang kosong
+      menuItems = data.map(item => ({
+        id: item.id,
+        name: item.nama || "Tanpa Nama",
+        desc: item.deskripsi || "-",
+        price: formatPrice(item.harga || 0),
+        priceNum: item.harga || 0,
+        modelSrc: item.model_url || "",
+        position: "0 0 0.1",
+        scale: item.scale || "0.05 0.05 0.05",
+        rotFrom: "0 0 0",
+        rotTo: "0 360 0",
+        stok: (item.stok ?? 0),   // ← stok tersedia, default 0 jika kolom belum ada
+      }));
+    } catch (err) {
+      console.error("[Supabase] Gagal menarik data menu:", err);
+      menuItems = []; 
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     9. INIT — urutan loading yang aman
+  ═══════════════════════════════════════════════════════ */
+  async function initApp() {
+    console.log("[App] --- Inisialisasi Dimulai ---");
+    await animateProgress(20, 300);
+    loadingHint.innerHTML = "Menarik data menu...";
+    
+    // 1. Tarik Data
+    await fetchDynamicMenu();
+    
+    if (menuItems.length === 0) {
+       loadingHint.innerHTML = "❌ Menu kosong. Admin belum menambahkan menu.";
+       console.log("[App] 🛑 Berhenti: Menu kosong atau gagal ditarik.");
+       return;
+    }
+
+    await animateProgress(40, 400);
+    loadingHint.innerHTML = "Memuat engine AR…<br>Izinkan akses kamera saat diminta.";
+
+    // 2. Tunggu A-Frame Loaded dengan batas waktu (Failsafe 4 detik)
+    console.log("[App] 3. Menunggu A-Frame loaded...");
+    const scene = document.getElementById("ar-scene");
+    await new Promise(resolve => {
+      if (scene.hasLoaded) return resolve();
+      
+      const aframeTimeout = setTimeout(() => {
+        console.warn("[App] ⚠️ A-Frame loaded timeout! Lanjut paksa.");
+        resolve();
+      }, 4000);
+
+      scene.addEventListener("loaded", () => {
+        clearTimeout(aframeTimeout);
+        resolve();
+      }, { once: true });
+    });
+
+    console.log("[App] 4. A-Frame Ready. Menunggu Kamera MindAR...");
+    await animateProgress(60, 400);
+    loadingHint.innerHTML = "Menghubungkan kamera…";
+
+    attachMarkerEvents();
+
+    // 3. Tunggu Kamera MindAR (Failsafe 8 detik)
+    await new Promise(resolve => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      
+      scene.addEventListener("arReady", () => {
+        console.log("[MindAR] ✅ Kamera menyala (arReady)");
+        finish();
+      }, { once: true });
+      
+      setTimeout(() => {
+        console.warn("[MindAR] ⚠️ arReady timeout! Lanjut paksa.");
+        finish();
+      }, 8000);
+    });
+
+    // 4. Render UI
+    console.log("[App] 5. Menyiapkan UI Menu...");
+    await animateProgress(100, 300);
+    sceneReady = true;
+
+    buildFoodButtons();
+    switchMenu(0);
+
+    // 5b. Aktifkan realtime stok — agar perubahan stok dari pesanan
+    //     pelanggan lain (atau dari admin) langsung terlihat tanpa refresh
+    initMenuRealtime();
+
+    // 5. Tutup Layar Loading
+    setTimeout(() => {
+      loadingScreen.classList.add("hidden");
+      console.log("[App] ✅ SEMUA SELESAI. UI Ditampilkan.");
+    }, 400);
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     REALTIME STOK
+     Dengarkan setiap UPDATE pada tabel 'menu'. Saat trigger
+     database mengurangi stok (lihat setup-stok-trigger.sql),
+     event ini akan otomatis terpicu di SEMUA layar yang
+     sedang terbuka — termasuk pelanggan lain yang sedang
+     melihat menu yang sama secara bersamaan.
+  ═══════════════════════════════════════════════════════ */
+  function initMenuRealtime() {
+    dbClient
+      .channel("menu-stok-realtime")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "menu" },
+        (payload) => {
+          const updatedRow = payload.new;
+          console.log("[Realtime Stok] Update diterima:", updatedRow);
+
+          // Cari item yang cocok di menuItems lokal berdasarkan id
+          const idx = menuItems.findIndex(m => m.id === updatedRow.id);
+          if (idx === -1) return; // menu ini tidak ada di daftar lokal
+
+          const stokLama = menuItems[idx].stok;
+          const stokBaru = updatedRow.stok ?? 0;
+          menuItems[idx].stok = stokBaru;
+
+          console.log(`[Realtime Stok] ${menuItems[idx].name}: ${stokLama} → ${stokBaru}`);
+
+          // Jika item yang diupdate sedang tampil di layar, refresh UI-nya
+          if (idx === currentIndex) {
+            updateStockUI(menuItems[idx]);
+
+            // Tampilkan notif kecil jika stok baru habis
+            if (stokBaru <= 0 && stokLama > 0) {
+              showSnackbar(`⚠️ ${menuItems[idx].name} baru saja habis`);
+            }
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log("[Realtime Stok] ✅ Tersambung — stok akan update otomatis.");
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          console.warn("[Realtime Stok] ⚠️ Status:", status);
+        }
+      });
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     ZOOM SYSTEM
+     Mendukung 3 cara zoom:
+       1. Tombol + dan − di UI
+       2. Drag slider
+       3. Pinch gesture (dua jari) di layar HP
+  ═══════════════════════════════════════════════════════ */
+
+  // Batas zoom: 0.2× sampai 3× dari skala asli item
+  const ZOOM_MIN  = 0.2;
+  const ZOOM_MAX  = 3.0;
+  const ZOOM_STEP = 0.15;   // per klik tombol
+  let   zoomLevel = 1.0;    // 1.0 = skala default item
+
+  const btnZoomIn  = document.getElementById("btn-zoom-in");
+  const btnZoomOut = document.getElementById("btn-zoom-out");
+  const zoomFill   = document.getElementById("zoom-fill");
+  const zoomThumb  = document.getElementById("zoom-thumb");
+  const zoomTrack  = document.getElementById("zoom-track");
+
+  /* Terapkan zoom ke model — mengalikan scale asli item dengan zoomLevel */
+  function applyZoom() {
+    const item       = menuItems[currentIndex];
+    const baseScale  = parseFloat(item.scale.split(" ")[0]);
+    const newScale   = baseScale * zoomLevel;
+    arModel.setAttribute("scale", `${newScale} ${newScale} ${newScale}`);
+
+    // Update slider visual
+    const pct = ((zoomLevel - ZOOM_MIN) / (ZOOM_MAX - ZOOM_MIN)) * 100;
+    zoomFill.style.width  = pct + "%";
+    zoomThumb.style.left  = pct + "%";
+  }
+
+  /* Reset zoom ke 1× saat ganti menu */
+  function resetZoom() {
+    zoomLevel = 1.0;
+    applyZoom();
+  }
+
+  /* ── Tombol + dan − ── */
+  btnZoomIn.addEventListener("click", () => {
+    zoomLevel = Math.min(ZOOM_MAX, zoomLevel + ZOOM_STEP);
+    applyZoom();
+  });
+  btnZoomOut.addEventListener("click", () => {
+    zoomLevel = Math.max(ZOOM_MIN, zoomLevel - ZOOM_STEP);
+    applyZoom();
+  });
+
+  /* ── Drag slider ── */
+  function handleSliderInput(clientX) {
+    const rect = zoomTrack.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    zoomLevel  = ZOOM_MIN + pct * (ZOOM_MAX - ZOOM_MIN);
+    applyZoom();
+  }
+
+  // Mouse drag
+  zoomTrack.addEventListener("mousedown", e => {
+    handleSliderInput(e.clientX);
+    const onMove = e => handleSliderInput(e.clientX);
+    const onUp   = () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup",   onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup",   onUp);
+  });
+
+  // Touch drag pada slider
+  zoomTrack.addEventListener("touchstart", e => {
+    e.preventDefault();
+    handleSliderInput(e.touches[0].clientX);
+    const onMove = e => { e.preventDefault(); handleSliderInput(e.touches[0].clientX); };
+    const onEnd  = () => {
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend",  onEnd);
+    };
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend",  onEnd);
+  }, { passive: false });
+
+  /* ── Pinch gesture (dua jari) di layar HP ── */
+  let pinchStartDist  = null;
+  let pinchStartZoom  = 1.0;
+
+  function getPinchDist(touches) {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  // Pasang listener pinch pada area kamera (bukan tombol UI)
+  document.getElementById("ar-scene").addEventListener("touchstart", e => {
+    if (e.touches.length === 2) {
+      pinchStartDist = getPinchDist(e.touches);
+      pinchStartZoom = zoomLevel;
+    }
+  }, { passive: true });
+
+  document.getElementById("ar-scene").addEventListener("touchmove", e => {
+    if (e.touches.length === 2 && pinchStartDist !== null) {
+      const dist  = getPinchDist(e.touches);
+      const ratio = dist / pinchStartDist;
+      zoomLevel   = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, pinchStartZoom * ratio));
+      applyZoom();
+    }
+  }, { passive: true });
+
+  document.getElementById("ar-scene").addEventListener("touchend", () => {
+    pinchStartDist = null;
+  }, { passive: true });
+
+  /* ═══════════════════════════════════════════════════════
+     ROTATION SYSTEM
+     - Drag/swipe 1 jari  : putar model sumbu Y (kiri-kanan)
+                            + sumbu X (atas-bawah)
+     - Tombol ⟳           : toggle auto-rotate on/off
+     - Saat drag mulai    : auto-rotate otomatis pause
+     - Saat drag selesai  : auto-rotate lanjut (jika aktif)
+  ═══════════════════════════════════════════════════════ */
+
+  let autoRotate     = true;       // status auto-rotate
+  let isDragging     = false;
+  let dragStartX     = 0;
+  let dragStartY     = 0;
+  let manualRotY     = 0;          // rotasi Y saat ini (derajat)
+  let manualRotX     = 0;          // rotasi X saat ini (derajat)
+  let autoRotTimer   = null;       // timer untuk resume auto-rotate
+  let hintShown      = false;
+
+  const btnAutorotate = document.getElementById("btn-autorotate");
+  const rotateHint    = document.getElementById("rotate-hint");
+
+  /* Ambil rotasi dasar item saat ini (sumbu X dari rotFrom) */
+  function getBaseRotX() {
+    return parseFloat(menuItems[currentIndex].rotFrom.split(" ")[0]) || 0;
+  }
+
+  /* Terapkan rotasi manual ke entity */
+  function applyManualRotation() {
+    arModel.setAttribute("rotation", `${manualRotX} ${manualRotY} 0`);
+  }
+
+  /* Pause auto-rotate — simpan posisi Y saat ini dari animasi */
+  function pauseAutoRotate() {
+    arModel.removeAttribute("animation");
+    // Baca rotasi aktual dari object3D agar tidak loncat
+    if (arModel.object3D) {
+      const r    = arModel.object3D.rotation;
+      manualRotY = THREE.MathUtils.radToDeg(r.y);
+      manualRotX = THREE.MathUtils.radToDeg(r.x);
+    }
+  }
+
+  /* Resume auto-rotate dari posisi Y saat ini */
+  function resumeAutoRotate() {
+    if (!autoRotate) return;
+    const item  = menuItems[currentIndex];
+    const baseX = getBaseRotX();
+    // Mulai dari sudut Y sekarang, lanjut +360
+    const toY   = manualRotY + 360;
+    arModel.setAttribute("animation",
+      `property: rotation; from: ${baseX} ${manualRotY} 0; to: ${baseX} ${toY} 0; loop: true; dur: 8000; easing: linear`
+    );
+  }
+
+  /* Toggle auto-rotate lewat tombol ⟳ */
+  btnAutorotate.addEventListener("click", () => {
+    autoRotate = !autoRotate;
+    btnAutorotate.classList.toggle("paused", !autoRotate);
+    btnAutorotate.title = autoRotate ? "Pause auto-rotate" : "Play auto-rotate";
+    btnAutorotate.textContent = autoRotate ? "⟳" : "⏸";
+
+    if (autoRotate) resumeAutoRotate();
+    else            pauseAutoRotate();
+  });
+
+  /* Tampilkan hint rotasi sekali saja */
+  function showRotateHint() {
+    if (hintShown) return;
+    hintShown = true;
+    rotateHint.classList.add("show");
+    setTimeout(() => rotateHint.classList.remove("show"), 2000);
+  }
+
+  /* ── Helper: apakah touch/click mengenai elemen UI? ── */
+  function isTouchOnUI(target) {
+    return target.closest(
+      "#ui-overlay, #btn-autorotate, #rotate-hint, #scan-hint, #loading-screen"
+    );
+  }
+
+  /* ══════════════════════════
+     MOUSE drag (desktop)
+  ══════════════════════════ */
+  document.addEventListener("mousedown", e => {
+    if (isTouchOnUI(e.target)) return;
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    pauseAutoRotate();
+    showRotateHint();
+    clearTimeout(autoRotTimer);
+  });
+
+  document.addEventListener("mousemove", e => {
+    if (!isDragging) return;
+    const dx   = e.clientX - dragStartX;
+    const dy   = e.clientY - dragStartY;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+
+    manualRotY += dx * 0.5;   // sensitivitas horizontal
+    manualRotX += dy * 0.3;   // sensitivitas vertikal (lebih pelan)
+    // Batasi rotasi X agar tidak terbalik sempurna
+    manualRotX  = Math.max(-60, Math.min(60, manualRotX));
+
+    applyManualRotation();
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!isDragging) return;
+    isDragging = false;
+    // Resume auto-rotate 2 detik setelah drag selesai
+    clearTimeout(autoRotTimer);
+    autoRotTimer = setTimeout(resumeAutoRotate, 2000);
+  });
+
+  /* ══════════════════════════
+     TOUCH drag (HP) — 1 jari
+     (2 jari sudah ditangani pinch zoom di atas)
+  ══════════════════════════ */
+  document.addEventListener("touchstart", e => {
+    if (isTouchOnUI(e.target))   return;
+    if (e.touches.length !== 1)  return;   // bukan single touch
+    isDragging = true;
+    dragStartX = e.touches[0].clientX;
+    dragStartY = e.touches[0].clientY;
+    pauseAutoRotate();
+    showRotateHint();
+    clearTimeout(autoRotTimer);
+  }, { passive: true });
+
+  document.addEventListener("touchmove", e => {
+    if (!isDragging || e.touches.length !== 1) return;
+    const dx   = e.touches[0].clientX - dragStartX;
+    const dy   = e.touches[0].clientY - dragStartY;
+    dragStartX = e.touches[0].clientX;
+    dragStartY = e.touches[0].clientY;
+
+    manualRotY += dx * 0.5;
+    manualRotX += dy * 0.3;
+    manualRotX  = Math.max(-60, Math.min(60, manualRotX));
+
+    applyManualRotation();
+  }, { passive: true });
+
+  document.addEventListener("touchend", e => {
+    if (e.touches.length > 0) return;   // masih ada jari lain
+    isDragging = false;
+    clearTimeout(autoRotTimer);
+    autoRotTimer = setTimeout(resumeAutoRotate, 2000);
+  }, { passive: true });
+
+  /* ═══════════════════════════════════════════════════════
+     SHOPPING CART SYSTEM
+  ═══════════════════════════════════════════════════════ */
+
+  // ── State keranjang ──
+  let cart = [];           // [ { name, price, priceNum, qty, menuIndex }, ... ]
+  let previewMode = false; // true saat user sedang preview model dari keranjang
+
+  // ── DOM refs cart ──
+  const cartModal    = document.getElementById("cart-modal");
+  const cartList     = document.getElementById("cart-list");
+  const cartEmpty    = document.getElementById("cart-empty");
+  const cartTotal    = document.getElementById("cart-total");
+  const cartBadge    = document.getElementById("cart-badge");
+  const cartBtn      = document.getElementById("cart-btn");
+  const inputMeja    = document.getElementById("input-meja");
+  const btnCheckout  = document.getElementById("btn-checkout");
+  const btnAddCart   = document.getElementById("btn-add-cart");
+  const snackbar     = document.getElementById("snackbar");
+  const btnBackCart  = document.getElementById("btn-back-cart");
+  const previewLabel = document.getElementById("preview-label");
+
+  /* Helper: parse harga string "Rp 55.000" → angka 55000 */
+  function parsePrice(priceStr) {
+    return parseInt(priceStr.replace(/[^0-9]/g, ""), 10) || 0;
+  }
+
+  /* Format angka → "Rp 55.000" */
+  function formatPrice(num) {
+    return "Rp " + num.toLocaleString("id-ID");
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     MODEL VISIBILITY STATE
+     Model hanya tampil jika:
+       a) user klik "Lihat 3D" dari keranjang  → previewMode = true
+       b) user memilih menu dari UI utama       → previewMode = false
+                                                   model tetap tampil normal
+     Saat pertama buka: model disembunyikan.
+  ═══════════════════════════════════════════════════════ */
+
+  /* Sembunyikan model 3D (tanpa merusak entitas A-Frame) */
+  function hideModel() {
+    arModel.setAttribute("visible", "false");
+    arModel.removeAttribute("animation");
+  }
+
+  /* Tampilkan model 3D dari data menuItem */
+  function showModelFromItem(menuItem) {
+    arModel.setAttribute("visible",   "true");
+    arModel.setAttribute("gltf-model", menuItem.modelSrc);
+    arModel.setAttribute("position",   menuItem.position);
+    arModel.setAttribute("scale",      menuItem.scale);
+    arModel.setAttribute("rotation",   menuItem.rotFrom);
+
+    arModel.removeAttribute("animation");
+    setTimeout(() => {
+      if (autoRotate) {
+        arModel.setAttribute("animation",
+          `property: rotation; from: ${menuItem.rotFrom}; to: ${menuItem.rotTo}; loop: true; dur: 8000; easing: linear`
+        );
+      }
+    }, 60);
+
+    // Reset zoom & rotasi manual
+    zoomLevel  = 1.0;
+    manualRotY = 0;
+    manualRotX = 0;
+    setTimeout(applyZoom, 80);
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     LIHAT 3D — dipanggil dari tombol di cart item
+     Menerima index menuItems (bukan index cart).
+  ═══════════════════════════════════════════════════════ */
+  function view3DFromCart(menuIndex) {
+    const menuItem = menuItems[menuIndex];
+    if (!menuItem) return;
+
+    previewMode = true;
+
+    // Tutup modal keranjang
+    closeCart();
+
+    // Tampilkan model 3D item tersebut
+    showModelFromItem(menuItem);
+
+    // Update currentIndex agar zoom/rotasi sinkron
+    currentIndex = menuIndex;
+
+    // Tampilkan tombol kembali & label nama item
+    btnBackCart.classList.add("visible");
+    previewLabel.textContent = `👁 ${menuItem.name}`;
+    previewLabel.classList.add("visible");
+
+    // Sembunyikan UI bottom panel saat preview agar AR lebih lega
+    document.getElementById("bottom-panel").style.opacity    = "0.3";
+    document.getElementById("bottom-panel").style.pointerEvents = "none";
+
+    console.log(`[View3D] Preview: ${menuItem.name}`);
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     KEMBALI KE KERANJANG — dari layar AR preview
+  ═══════════════════════════════════════════════════════ */
+  function backToCart() {
+    previewMode = false;
+
+    // Sembunyikan model 3D
+    hideModel();
+
+    // Sembunyikan tombol kembali & label
+    btnBackCart.classList.remove("visible");
+    previewLabel.classList.remove("visible");
+
+    // Kembalikan bottom panel
+    document.getElementById("bottom-panel").style.opacity      = "1";
+    document.getElementById("bottom-panel").style.pointerEvents = "auto";
+
+    // Buka kembali modal keranjang
+    openCart();
+
+    console.log("[View3D] Kembali ke keranjang.");
+  }
+
+  /* ── Tambah item ke keranjang ── */
+  function addToCart() {
+    const item     = menuItems[currentIndex];
+    const existing = cart.find(c => c.name === item.name);
+    const qtyDiCart = existing ? existing.qty : 0;
+
+    // ── Validasi stok sebelum menambah ──
+    if (item.stok <= 0) {
+      Swal.fire({
+        ...SwalTheme,
+        icon: 'error',
+        iconColor: '#f87171',
+        title: 'Stok Habis',
+        text: `${item.name} sedang tidak tersedia.`,
+        confirmButtonText: 'OK',
+        showCancelButton: false,
+      });
+      return;
+    }
+    if (qtyDiCart + 1 > item.stok) {
+      Swal.fire({
+        ...SwalTheme,
+        icon: 'warning',
+        iconColor: '#f5c842',
+        title: 'Stok Terbatas',
+        text: `Sisa stok ${item.name} hanya ${item.stok}.`,
+        confirmButtonText: 'OK',
+        showCancelButton: false,
+      });
+      return;
+    }
+
+    if (existing) {
+      existing.qty++;
+    } else {
+      cart.push({
+        name:      item.name,
+        price:     item.price,
+        priceNum:  parsePrice(item.price),
+        qty:       1,
+        menuIndex: currentIndex,   // ← simpan index untuk view3D
+      });
+    }
+
+    updateCartUI();
+    showSnackbar(`✓ ${item.name} ditambahkan`);
+
+    btnAddCart.classList.add("added");
+    btnAddCart.textContent = "✓ Ditambahkan!";
+    setTimeout(() => {
+      btnAddCart.classList.remove("added");
+      btnAddCart.innerHTML = "🛒 Tambah ke Keranjang";
+    }, 1200);
+  }
+
+  /* ── Update semua elemen UI keranjang ── */
+  function updateCartUI() {
+    const totalQty = cart.reduce((s, c) => s + c.qty, 0);
+    const totalVal = cart.reduce((s, c) => s + c.priceNum * c.qty, 0);
+
+    if (totalQty > 0) {
+      cartBadge.textContent = totalQty;
+      cartBadge.classList.add("show");
+      cartBtn.classList.add("has-item");
+    } else {
+      cartBadge.classList.remove("show");
+      cartBtn.classList.remove("has-item");
+    }
+
+    cartTotal.textContent    = formatPrice(totalVal);
+    btnCheckout.disabled     = cart.length === 0;
+    // Tombol lihat semua 3D aktif hanya jika ada item di keranjang
+    document.getElementById("btn-view-all-3d").disabled = cart.length === 0;
+
+    renderCartList();
+  }
+
+  /* ── Render list item di dalam modal ── */
+  function renderCartList() {
+    Array.from(cartList.children).forEach(el => {
+      if (el.id !== "cart-empty") el.remove();
+    });
+
+    if (cart.length === 0) {
+      cartEmpty.style.display = "block";
+      return;
+    }
+    cartEmpty.style.display = "none";
+
+    cart.forEach((item, idx) => {
+      const row = document.createElement("div");
+      row.className = "cart-item";
+      row.innerHTML = `
+        <div class="cart-item-info">
+          <div class="cart-item-name">${item.name}</div>
+          <div class="cart-item-price">
+            ${formatPrice(item.priceNum)} × ${item.qty}
+            = <strong>${formatPrice(item.priceNum * item.qty)}</strong>
+          </div>
+        </div>
+        <div class="qty-control">
+          <button class="qty-btn" onclick="changeQty(${idx}, -1)">−</button>
+          <span class="qty-num">${item.qty}</span>
+          <button class="qty-btn" onclick="changeQty(${idx}, +1)">+</button>
+        </div>
+      `;
+      cartList.appendChild(row);
+    });
+  }
+
+  /* ── Ubah qty; qty 0 → hapus ── */
+  function changeQty(idx, delta) {
+    cart[idx].qty += delta;
+    if (cart[idx].qty <= 0) cart.splice(idx, 1);
+    updateCartUI();
+  }
+
+  /* ── Buka / tutup modal ── */
+  function openCart() {
+    cartModal.classList.add("open");
+    renderCartList();
+  }
+
+  function closeCart() {
+    cartModal.classList.remove("open");
+  }
+
+  function handleModalBackdrop(e) {
+    if (e.target === cartModal) closeCart();
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     SUPABASE CONFIG
+     Isi SUPABASE_URL dan SUPABASE_KEY dari:
+     Supabase Dashboard → Settings → API
+  ═══════════════════════════════════════════════════════ */
+  const SUPABASE_URL = "https://gmaazbtnstjmtuvmjgpg.supabase.co"; // ← ganti
+  const SUPABASE_KEY = "sb_publishable_tz7Gsf3ppyoTO_2ER4jQsA_UhIb3I4S"; // ← ganti
+
+  // Cara resmi Supabase untuk CDN/UMD:
+  // 1. Destructure createClient dari global 'supabase' (inject oleh CDN)
+  // 2. Panggil createClient, simpan ke variabel berbeda (dbClient)
+  //    agar tidak bentrok dengan nama global 'supabase'
+  const { createClient } = supabase;
+  const dbClient = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  /* ── Konfigurasi tema SweetAlert2 ── */
+  const SwalTheme = {
+    background:         '#13131f',
+    color:              '#ffffff',
+    confirmButtonColor: '#f5c842',
+    cancelButtonColor:  'rgba(255,255,255,0.08)',
+    customClass: {
+      popup:         'swal-popup',
+      title:         'swal-title',
+      htmlContainer: 'swal-html',
+      confirmButton: 'swal-confirm',
+      cancelButton:  'swal-cancel',
+    }
+  };
+
+  /* ═══════════════════════════════════════════════════════
+     kirimPesanan() — INSERT ke tabel 'pesanan' di Supabase
+     Schema tabel yang diperlukan:
+       id          bigint generated always as identity (PK)
+       created_at  timestamptz default now()
+       nomor_meja  text
+       items       jsonb
+       total_harga integer  (dalam rupiah, tanpa desimal)
+       status      text default 'baru'
+  ═══════════════════════════════════════════════════════ */
+  async function kirimPesanan(nomorMeja) {
+    const totalNum = cart.reduce((s, c) => s + c.priceNum * c.qty, 0);
+
+    const payload = {
+      nomor_meja:  nomorMeja,
+      items: cart.map(c => ({ 
+        nama:     c.name,
+        qty:      c.qty,
+        harga:    c.priceNum,
+        subtotal: c.priceNum * c.qty,
+        menu_id:  menuItems[c.menuIndex]?.id ?? null,
+
+      })),
+      total_harga: totalNum,
+      status:      "baru",
+    };
+
+    const { data, error } = await dbClient
+      .from("pesanan")
+      .insert([payload])
+      .select();
+
+    if (error) throw error;
+
+    // ── Stok dikurangi otomatis oleh database trigger (lihat setup SQL) ──
+    // Tidak perlu panggil kurangiStok() manual dari sisi client lagi.
+    // Trigger menjamin atomicity — aman walau banyak pesanan masuk bersamaan.
+
+    return data;
+  }
+
+  /* ── Checkout — async dengan Supabase ── */
+  async function checkout() {
+    const nomorMeja = inputMeja.value.trim();
+
+    if (!nomorMeja) {
+      inputMeja.focus();
+      inputMeja.style.borderColor = "#f87171";
+      setTimeout(() => { inputMeja.style.borderColor = ""; }, 1500);
+      Swal.fire({
+        ...SwalTheme,
+        icon:              'warning',
+        iconColor:         '#f5c842',
+        title:             'Nomor Meja Kosong',
+        text:              'Silakan isi nomor meja terlebih dahulu.',
+        confirmButtonText: 'OK',
+        showCancelButton:  false,
+      });
+      return;
+    }
+    if (cart.length === 0) return;
+
+    // Disable tombol selama proses kirim
+    btnCheckout.disabled    = true;
+    btnCheckout.textContent = "⏳ Mengirim...";
+
+    try {
+      await kirimPesanan(nomorMeja);
+
+      const rows  = cart.map(c =>
+        `<tr>
+          <td style="text-align:left;padding:4px 0;color:#ccc">${c.name}</td>
+          <td style="text-align:center;padding:4px 8px;color:#888">×${c.qty}</td>
+          <td style="text-align:right;padding:4px 0;color:#f5c842;font-weight:600">${formatPrice(c.priceNum * c.qty)}</td>
+        </tr>`
+      ).join("");
+      const total = formatPrice(cart.reduce((s,c) => s + c.priceNum * c.qty, 0));
+
+      await Swal.fire({
+        ...SwalTheme,
+        title: `Pesanan ${nomorMeja}`,
+        html: `
+          <table style="width:100%;border-collapse:collapse;font-size:0.88rem;margin-bottom:12px">
+            ${rows}
+            <tr style="border-top:1px solid rgba(255,255,255,0.1)">
+              <td colspan="2" style="padding-top:10px;color:rgba(255,255,255,0.5);text-transform:uppercase;font-size:0.72rem;letter-spacing:0.1em">Total</td>
+              <td style="padding-top:10px;text-align:right;font-size:1.1rem;font-weight:700;color:#f5c842">${total}</td>
+            </tr>
+          </table>
+          <p style="color:#4ade80;font-size:0.82rem;font-weight:600">✓ Pesanan berhasil dikirim ke kasir!</p>
+        `,
+        icon:              'success',
+        iconColor:         '#4ade80',
+        confirmButtonText: '✓ Tutup',
+        showCancelButton:  false,
+        allowOutsideClick: false,
+      });
+
+      // ── Optimistic update stok lokal ──
+      // Hanya untuk tampilan UI sisi pelanggan (tidak nulis ke DB).
+      // Nilai pasti sudah dikurangi di server oleh trigger DB.
+      cart.forEach(cartItem => {
+        const menuItem = menuItems[cartItem.menuIndex];
+        if (menuItem) menuItem.stok = Math.max(0, menuItem.stok - cartItem.qty);
+      });
+      if (menuItems[currentIndex]) updateStockUI(menuItems[currentIndex]);
+
+      cart = [];
+      inputMeja.value = "";
+      updateCartUI();
+      closeCart();
+
+    } catch (err) {
+      console.error("[Supabase] Error:", err);
+
+      // Jika error berasal dari validasi stok di database (trigger),
+      // pesan akan berisi "Stok ... tidak cukup" — tampilkan lebih ramah.
+      const isStockError = (err.message || "").toLowerCase().includes("stok");
+
+      Swal.fire({
+        ...SwalTheme,
+        icon:              isStockError ? 'warning' : 'error',
+        iconColor:         isStockError ? '#f5c842' : '#f87171',
+        title:             isStockError ? 'Stok Tidak Cukup' : 'Gagal Mengirim',
+        html: isStockError
+          ? `<p style="color:#f5c842">${err.message}</p><p style="color:rgba(255,255,255,0.4);font-size:0.78rem;margin-top:8px">Silakan sesuaikan jumlah pesanan Anda.</p>`
+          : `<p style="color:#f87171">Pesanan gagal dikirim.<br><small style="color:#888">${err.message || "Cek koneksi internet."}</small></p>`,
+        confirmButtonText: isStockError ? 'Mengerti' : 'Coba Lagi',
+        showCancelButton:  false,
+      });
+
+      // Jika gagal karena stok, refresh data menu agar stok ter-update
+      if (isStockError) {
+        await fetchDynamicMenu();
+        if (menuItems[currentIndex]) updateStockUI(menuItems[currentIndex]);
+      }
+    } finally {
+      btnCheckout.disabled    = false;
+      btnCheckout.textContent = "✅ Selesaikan Pesanan";
+    }
+  }
+
+  /* ── Snackbar helper ── */
+  let snackTimer = null;
+  function showSnackbar(msg) {
+    snackbar.textContent = msg;
+    snackbar.classList.add("show");
+    clearTimeout(snackTimer);
+    snackTimer = setTimeout(() => snackbar.classList.remove("show"), 2000);
+  }
+
+  /* Nomor meja — aktifkan checkout saat terisi */
+  inputMeja.addEventListener("input", () => {
+    btnCheckout.disabled = cart.length === 0 || inputMeja.value.trim() === "";
+  });
+
+  /* ═══════════════════════════════════════════════════════
+     MULTI-VIEW 3D SYSTEM
+     — Model tampil STATIS (tanpa animasi rotasi)
+     — Cleanup ketat sebelum setiap sesi baru
+     — "Tutup AR" → sembunyikan scene, buka keranjang
+  ═══════════════════════════════════════════════════════ */
+
+  let multiViewActive = false;
+
+  const btnViewAll3D      = document.getElementById("btn-view-all-3d");
+  const btnCloseMultiview = document.getElementById("btn-close-multiview");
+  const multiviewLabel    = document.getElementById("multiview-label");
+
+  /* ── Hitung posisi X tersebar merata ──────────────────
+     1 item  →  [ 0 ]
+     2 item  →  [ -0.25,  0.25 ]
+     3 item  →  [ -0.35,  0,    0.35 ]
+     4 item  →  [ -0.38, -0.12, 0.12, 0.38 ]
+     Spacing makin kecil otomatis jika item banyak.
+  ─────────────────────────────────────────────────────── */
+  function calcPositions(count) {
+    if (count === 1) return [{ x: 0, y: 0, z: 0 }];
+    const spacing = Math.min(0.30, 0.85 / count);
+    const totalW  = spacing * (count - 1);
+    const startX  = -(totalW / 2);
+    return Array.from({ length: count }, (_, i) => ({
+      x: parseFloat((startX + i * spacing).toFixed(3)),
+      y: 0,
+      z: 0,
+    }));
+  }
+
+  /* ── Hapus SEMUA entitas multi-view secara menyeluruh ──
+     Dibersihkan 3 lapisan:
+       1. Entitas bertag data-mv="true" di seluruh scene
+       2. Anak langsung anchor marker selain #ar-model
+       3. ar-model utama disembunyikan
+  ─────────────────────────────────────────────────────── */
+  function clearAllMultiViewEntities() {
+    // Layer 1 — tag data-mv (paling andal)
+    document.querySelectorAll('[data-mv="true"]').forEach(el => el.remove());
+
+    // Layer 2 — fallback: anak anchor selain ar-model
+    const anchor = document.querySelector("[mindar-image-target]");
+    if (anchor) {
+      Array.from(anchor.children).forEach(el => {
+        if (el.id !== "ar-model") el.remove();
+      });
+    }
+
+    // Layer 3 — sembunyikan ar-model utama
+    hideModel();
+
+    console.log("[MultiView] ✅ Semua entitas dibersihkan.");
+  }
+
+  /* ── LIHAT SEMUA PESANAN (AR) ──────────────────────────
+     Dipanggil saat tombol "📷 Lihat Semua Pesanan (AR)" diklik.
+     Langkah:
+       1. Bersihkan entitas sesi sebelumnya (idempoten — aman dipanggil berulang)
+       2. Loop cart → buat <a-entity> baru per item, TANPA animation
+       3. Posisi tersebar otomatis via calcPositions()
+       4. Tampil UI overlay multi-view
+  ─────────────────────────────────────────────────────── */
+  function viewAll3D() {
+    if (cart.length === 0) return;
+
+    multiViewActive = true;
+
+    // Tutup modal keranjang
+    closeCart();
+
+    // ── STEP 1: Bersihkan sesi sebelumnya ──
+    clearAllMultiViewEntities();
+
+    const anchor    = document.querySelector("[mindar-image-target]");
+    const positions = calcPositions(cart.length);
+
+    // ── STEP 2: Buat entitas baru per item ──
+    cart.forEach((cartItem, i) => {
+      const menuItem = menuItems[cartItem.menuIndex];
+      if (!menuItem) return;
+
+      const pos = positions[i];
+
+      const entity = document.createElement("a-entity");
+
+      // Tag untuk cleanup — wajib ada
+      entity.setAttribute("data-mv",    "true");
+
+      // Model & transform
+      entity.setAttribute("gltf-model", menuItem.modelSrc);
+      entity.setAttribute("position",   `${pos.x} ${pos.y} ${pos.z}`);
+      entity.setAttribute("scale",      menuItem.scale);
+      entity.setAttribute("rotation",   menuItem.rotFrom);  // rotasi awal, STATIS
+
+      // ← TIDAK ada setAttribute("animation", ...) → model statis
+
+      anchor.appendChild(entity);
+
+      console.log(`[MultiView] Spawn: "${menuItem.name}" → pos x:${pos.x}`);
+    });
+
+    // ── STEP 3: Tampilkan UI overlay multi-view ──
+    multiviewLabel.textContent = `📷 ${cart.length} item ditampilkan dalam AR`;
+    multiviewLabel.classList.add("visible");
+    btnCloseMultiview.classList.add("visible");
+
+    // Redup bottom panel agar AR lebih lega
+    const panel = document.getElementById("bottom-panel");
+    panel.style.opacity      = "0.2";
+    panel.style.pointerEvents = "none";
+
+    // Sembunyikan tombol kembali single-view jika aktif
+    btnBackCart.classList.remove("visible");
+    previewLabel.classList.remove("visible");
+
+    console.log(`[MultiView] ✅ ${cart.length} model ditampilkan (statis).`);
+  }
+
+  /* ── TUTUP AR ──────────────────────────────────────────
+     1. Hapus semua entitas multi-view
+     2. Sembunyikan overlay scene AR (opacity penuh kembali)
+     3. Buka kembali modal keranjang
+  ─────────────────────────────────────────────────────── */
+  function closeMultiView() {
+    multiViewActive = false;
+
+    // Hapus semua model multi-view
+    clearAllMultiViewEntities();
+
+    // Sembunyikan UI overlay multi-view
+    multiviewLabel.classList.remove("visible");
+    btnCloseMultiview.classList.remove("visible");
+
+    // Kembalikan bottom panel
+    const panel = document.getElementById("bottom-panel");
+    panel.style.opacity      = "1";
+    panel.style.pointerEvents = "auto";
+
+    // Buka kembali modal keranjang
+    openCart();
+
+    console.log("[MultiView] ✅ Tutup AR — kembali ke keranjang.");
+  }
+
+  window.addEventListener("DOMContentLoaded", () => {
+    initApp();
+  });
+</script>
+</body>
+</html>

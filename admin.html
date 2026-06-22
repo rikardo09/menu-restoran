@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard Kasir — AR Menu</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    /* ════════════════════════════════════════
+       RESET & TOKENS
+    ════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold:      #f5c842;
+      --gold-dim:  rgba(245,200,66,0.12);
+      --deep:      #0d0d14;
+      --surface:   #13131f;
+      --surface2:  #1a1a2e;
+      --border:    rgba(245,200,66,0.2);
+      --border2:   rgba(255,255,255,0.07);
+      --text:      #f0f0f0;
+      --muted:     rgba(255,255,255,0.45);
+      --green:     #4ade80;
+      --orange:    #fb923c;
+      --red:       #f87171;
+      --radius:    14px;
+      --font:      'DM Sans', 'Segoe UI', sans-serif;
+    }
+
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+    html, body {
+      min-height: 100vh;
+      background: var(--deep);
+      color: var(--text);
+      font-family: var(--font);
+    }
+
+    /* ════════════════════════════════════════
+       LAYOUT
+    ════════════════════════════════════════ */
+    #app {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+
+    /* ── Topbar ── */
+    #topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 28px;
+      padding-bottom: 20px;
+      border-bottom: 1px solid var(--border2);
+    }
+
+    .topbar-left h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--gold);
+      letter-spacing: 0.02em;
+    }
+    .topbar-left p {
+      font-size: 0.78rem;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    /* Realtime status indicator */
+    #rt-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      border-radius: 99px;
+      border: 1px solid var(--border2);
+      background: var(--surface);
+      font-size: 0.75rem;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+    }
+    #rt-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #555;
+      transition: background 0.4s;
+    }
+    #rt-dot.live   { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    #rt-dot.error  { background: var(--red); }
+
+    /* ── Stats row ── */
+    #stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+    }
+    .stat-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .stat-value.gold { color: var(--gold); }
+    .stat-value.green { color: var(--green); }
+
+    /* ── Filter & actions bar ── */
+    #filter-bar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .filter-btn {
+      padding: 7px 16px;
+      border-radius: 99px;
+      border: 1px solid var(--border2);
+      background: transparent;
+      color: var(--muted);
+      font-family: var(--font);
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .filter-btn:hover { border-color: var(--border); color: var(--text); }
+    .filter-btn.active {
+      background: var(--gold-dim);
+      border-color: var(--gold);
+      color: var(--gold);
+      font-weight: 600;
+    }
+
+    #btn-refresh {
+      margin-left: auto;
+      padding: 7px 16px;
+      border-radius: 99px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--gold);
+      font-family: var(--font);
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    #btn-refresh:hover { background: var(--gold-dim); }
+    #btn-refresh.spinning { animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Table ── */
+    #orders-table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    thead th {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border2);
+    }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border2);
+      transition: background 0.15s;
+    }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: rgba(255,255,255,0.025); }
+    tbody tr.new-row {
+      animation: rowFlash 1.2s ease;
+    }
+    @keyframes rowFlash {
+      0%   { background: rgba(245,200,66,0.15); }
+      100% { background: transparent; }
+    }
+
+    td {
+      padding: 13px 16px;
+      vertical-align: middle;
+      color: var(--text);
+    }
+
+    .td-id    { color: var(--muted); font-size: 0.75rem; font-family: monospace; }
+    .td-meja  { font-weight: 600; }
+    .td-waktu { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+    .td-total { color: var(--gold); font-weight: 700; white-space: nowrap; }
+
+    /* Item pills */
+    .item-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .item-pill {
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid var(--border2);
+      font-size: 0.72rem;
+      color: rgba(255,255,255,0.7);
+      white-space: nowrap;
+    }
+
+    /* Status badge */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+    }
+    .badge.baru    { background: rgba(251,146,60,0.15); color: var(--orange); border: 1px solid rgba(251,146,60,0.3); }
+    .badge.proses  { background: rgba(245,200,66,0.12); color: var(--gold);   border: 1px solid rgba(245,200,66,0.3); }
+    .badge.selesai { background: rgba(74,222,128,0.1);  color: var(--green);  border: 1px solid rgba(74,222,128,0.25); }
+    .badge.batal   { background: rgba(248,113,113,0.1); color: var(--red);    border: 1px solid rgba(248,113,113,0.25); }
+
+    /* Empty & loading states */
+    #empty-state, #loading-state {
+      text-align: center;
+      padding: 52px 20px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .empty-icon { font-size: 2.5rem; display: block; margin-bottom: 12px; }
+
+    /* Toast notification */
+    #toast {
+      position: fixed;
+      top: 20px; right: 20px;
+      z-index: 999;
+      padding: 12px 20px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 0.83rem;
+      color: var(--text);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+      opacity: 0;
+      transform: translateY(-10px);
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none;
+      max-width: 300px;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast .t-title { font-weight: 700; color: var(--gold); margin-bottom: 3px; }
+    #toast .t-body  { color: var(--muted); font-size: 0.78rem; }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      thead th:nth-child(1),
+      td:nth-child(1) { display: none; }  /* hide ID on mobile */
+      .topbar-left h1 { font-size: 1.1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="app">
+
+  <div id="topbar">
+    <div class="topbar-left">
+      <h1>✦ Dashboard Kasir</h1>
+      <p>Pesanan masuk realtime — AR Digital Menu</p>
+    </div>
+    <div style="display: flex; gap: 12px; align-items: center;">
+      <div id="rt-status">
+        <div id="rt-dot"></div>
+        <span id="rt-label">Menghubungkan…</span>
+      </div>
+      <button onclick="logout()" style="padding: 6px 12px; background: transparent; border: 1px solid #f87171; color: #f87171; border-radius: 6px; cursor: pointer;">Logout</button>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div id="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Total Pesanan</div>
+      <div class="stat-value" id="stat-total">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Pesanan Baru</div>
+      <div class="stat-value gold" id="stat-baru">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Sedang Diproses</div>
+      <div class="stat-value" id="stat-proses">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Pendapatan Hari Ini</div>
+      <div class="stat-value green" id="stat-revenue">—</div>
+    </div>
+  </div>
+
+  <!-- Filter bar -->
+  <div id="filter-bar">
+    <button class="filter-btn active" onclick="setFilter('semua')">Semua</button>
+    <button class="filter-btn" onclick="setFilter('baru')">🟠 Baru</button>
+    <button class="filter-btn" onclick="setFilter('proses')">🟡 Diproses</button>
+    <button class="filter-btn" onclick="setFilter('selesai')">🟢 Selesai</button>
+    <button class="filter-btn" onclick="setFilter('batal')">🔴 Dibatal</button>
+    <button id="btn-refresh" onclick="loadOrders()" title="Refresh">↻ Refresh</button>
+  </div>
+
+  <!-- Orders table -->
+  <div id="orders-table-wrap">
+    <div id="loading-state"><span class="empty-icon">⏳</span>Memuat pesanan…</div>
+    <table id="orders-table" style="display:none">
+      <thead>
+        <tr>
+          <th>#ID</th>
+          <th>Meja</th>
+          <th>Item Pesanan</th>
+          <th>Total</th>
+          <th>Waktu</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="orders-tbody"></tbody>
+    </table>
+    <div id="empty-state" style="display:none">
+      <span class="empty-icon">🍽️</span>
+      Belum ada pesanan masuk.
+    </div>
+  </div>
+
+  <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border2);">
+    <h2 style="color: var(--gold); margin-bottom: 16px; font-size: 1.2rem;">Manajemen Menu AR</h2>
+    
+    <div style="display: grid; grid-template-columns: 1fr 2fr; gap: 20px;">
+      <div class="stat-card">
+        <h3 style="font-size: 0.9rem; margin-bottom: 12px;">Tambah Menu Baru</h3>
+        <form id="form-menu" onsubmit="tambahMenu(event)">
+          <input type="text" id="m-nama" placeholder="Nama Menu" required style="width: 100%; margin-bottom: 10px; padding: 8px; background: var(--surface2); border: 1px solid var(--border2); color: white; border-radius: 6px;">
+          <input type="number" id="m-harga" placeholder="Harga (Angka)" required style="width: 100%; margin-bottom: 10px; padding: 8px; background: var(--surface2); border: 1px solid var(--border2); color: white; border-radius: 6px;">
+          <input type="number" id="m-stok" placeholder="Stok Tersedia" required min="0" style="width: 100%; margin-bottom: 10px; padding: 8px; background: var(--surface2); border: 1px solid var(--border2); color: white; border-radius: 6px;">
+          <textarea id="m-desc" placeholder="Deskripsi Menu" required style="width: 100%; margin-bottom: 10px; padding: 8px; background: var(--surface2); border: 1px solid var(--border2); color: white; border-radius: 6px; height: 60px;"></textarea>
+          <label style="font-size: 0.8rem; color: var(--muted); margin-bottom: 4px; display: block;">File Model 3D (.glb)</label>
+          <input type="file" id="m-file" accept=".glb" required style="width: 100%; margin-bottom: 14px; color: white;">
+          <button type="submit" id="btn-simpan-menu" style="width: 100%; padding: 10px; background: var(--gold); border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">Simpan Menu</button>
+        </form>
+      </div>
+
+      <div class="stat-card" style="overflow-x: auto;">
+        <table style="width: 100%; text-align: left; font-size: 0.85rem;">
+          <thead>
+            <tr>
+              <th style="padding: 8px; border-bottom: 1px solid var(--border2);">Nama</th>
+              <th style="padding: 8px; border-bottom: 1px solid var(--border2);">Harga</th>
+              <th style="padding: 8px; border-bottom: 1px solid var(--border2);">Stok</th>
+              <th style="padding: 8px; border-bottom: 1px solid var(--border2);">Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="menu-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Toast notif realtime -->
+<div id="toast">
+  <div class="t-title" id="toast-title"></div>
+  <div class="t-body"  id="toast-body"></div>
+</div>
+
+<script>
+  /* ════════════════════════════════════════════════════════
+     SUPABASE CONFIG — ganti dengan kredensial kamu
+  ════════════════════════════════════════════════════════ */
+  const SUPABASE_URL = "https://gmaazbtnstjmtuvmjgpg.supabase.co"; // ← ganti
+  const SUPABASE_KEY = "sb_publishable_tz7Gsf3ppyoTO_2ER4jQsA_UhIb3I4S"; // ← ganti
+
+  const { createClient } = supabase;
+  const dbClient = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+  /* ════════════════════════════════════════════════════════
+     STATE
+  ════════════════════════════════════════════════════════ */
+  let allOrders   = [];   // semua pesanan dari Supabase
+  let activeFilter = "semua";
+
+  /* ════════════════════════════════════════════════════════
+     FORMAT HELPERS
+  ════════════════════════════════════════════════════════ */
+  function formatRp(num) {
+    return "Rp " + Number(num).toLocaleString("id-ID");
+  }
+
+  function formatTime(isoStr) {
+    if (!isoStr) return "—";
+    const d = new Date(isoStr);
+    return d.toLocaleString("id-ID", {
+      day: "2-digit", month: "short",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  /* ════════════════════════════════════════════════════════
+     LOAD ORDERS — fetch semua pesanan hari ini dari Supabase
+  ════════════════════════════════════════════════════════ */
+  async function loadOrders() {
+    const btn = document.getElementById("btn-refresh");
+    btn.classList.add("spinning");
+
+    // Ambil pesanan dari hari ini (00:00 WIB)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const { data, error } = await dbClient
+      .from("pesanan")
+      .select("*")
+      .gte("created_at", today.toISOString())
+      .order("created_at", { ascending: false });
+
+    btn.classList.remove("spinning");
+
+    if (error) {
+      console.error("[Admin] Load error:", error);
+      return;
+    }
+
+    allOrders = data || [];
+    renderTable();
+    updateStats();
+  }
+
+  /* ════════════════════════════════════════════════════════
+     RENDER TABLE — render baris berdasarkan filter aktif
+  ════════════════════════════════════════════════════════ */
+  function renderTable(highlightId = null) {
+    const tbody    = document.getElementById("orders-tbody");
+    const table    = document.getElementById("orders-table");
+    const empty    = document.getElementById("empty-state");
+    const loading  = document.getElementById("loading-state");
+
+    loading.style.display = "none";
+
+    const filtered = activeFilter === "semua"
+      ? allOrders
+      : allOrders.filter(o => o.status === activeFilter);
+
+    if (filtered.length === 0) {
+      table.style.display = "none";
+      empty.style.display  = "block";
+      return;
+    }
+
+    table.style.display = "";
+    empty.style.display  = "none";
+    tbody.innerHTML      = "";
+
+    filtered.forEach(order => {
+      const items   = Array.isArray(order.items) ? order.items : [];
+      const pillsHtml = items.map(it =>
+        `<span class="item-pill">${it.nama} ×${it.qty}</span>`
+      ).join("");
+
+      const tr = document.createElement("tr");
+      if (order.id === highlightId) tr.classList.add("new-row");
+
+      tr.innerHTML = `
+        <td class="td-id">#${order.id}</td>
+        <td class="td-meja">${order.nomor_meja || "—"}</td>
+        <td><div class="item-pills">${pillsHtml}</div></td>
+        <td class="td-total">${formatRp(order.total_harga)}</td>
+        <td class="td-waktu">${formatTime(order.created_at)}</td>
+        <td>
+          <button
+            class="badge ${order.status || 'baru'}"
+            onclick="cycleStatus(${order.id}, '${order.status}')"
+            title="Klik untuk ganti status"
+          >${statusLabel(order.status)}</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  /* Status label helper */
+  function statusLabel(s) {
+    const map = { baru: "🟠 Baru", proses: "🟡 Diproses", selesai: "🟢 Selesai", batal: "🔴 Batal" };
+    return map[s] || s || "baru";
+  }
+
+  /* ════════════════════════════════════════════════════════
+     UPDATE STATS
+  ════════════════════════════════════════════════════════ */
+  function updateStats() {
+    const baru    = allOrders.filter(o => o.status === "baru").length;
+    const proses  = allOrders.filter(o => o.status === "proses").length;
+    const revenue = allOrders
+      .filter(o => o.status !== "batal")
+      .reduce((s, o) => s + (o.total_harga || 0), 0);
+
+    document.getElementById("stat-total").textContent   = allOrders.length;
+    document.getElementById("stat-baru").textContent    = baru;
+    document.getElementById("stat-proses").textContent  = proses;
+    document.getElementById("stat-revenue").textContent = formatRp(revenue);
+  }
+
+  /* ════════════════════════════════════════════════════════
+     CYCLE STATUS — klik badge untuk ubah status pesanan
+     baru → proses → selesai → baru (loop)
+  ════════════════════════════════════════════════════════ */
+  async function cycleStatus(id, currentStatus) {
+    const cycle = { baru: "proses", proses: "selesai", selesai: "baru", batal: "baru" };
+    const next  = cycle[currentStatus] || "proses";
+
+    const { error } = await dbClient
+      .from("pesanan")
+      .update({ status: next })
+      .eq("id", id);
+
+    if (error) {
+      console.error("[Admin] Update status error:", error);
+      return;
+    }
+
+    // Update lokal tanpa refetch
+    const idx = allOrders.findIndex(o => o.id === id);
+    if (idx !== -1) allOrders[idx].status = next;
+    renderTable();
+    updateStats();
+  }
+
+  /* ════════════════════════════════════════════════════════
+     FILTER
+  ════════════════════════════════════════════════════════ */
+  function setFilter(f) {
+    activeFilter = f;
+    document.querySelectorAll(".filter-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.textContent.toLowerCase().includes(f) || f === "semua" && btn.textContent === "Semua");
+    });
+    renderTable();
+  }
+
+  /* ════════════════════════════════════════════════════════
+     TOAST NOTIFIKASI
+  ════════════════════════════════════════════════════════ */
+  let toastTimer;
+  function showToast(title, body) {
+    const toast = document.getElementById("toast");
+    document.getElementById("toast-title").textContent = title;
+    document.getElementById("toast-body").textContent  = body;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove("show"), 4000);
+  }
+
+  /* ════════════════════════════════════════════════════════
+     REALTIME SUBSCRIPTION
+     Dengerin setiap INSERT baru di tabel 'pesanan'.
+     Saat ada pesanan masuk:
+       1. Tambahkan ke allOrders (index 0 = terbaru)
+       2. Re-render tabel dengan highlight baris baru
+       3. Tampilkan toast notifikasi
+       4. Update stats
+  ════════════════════════════════════════════════════════ */
+  function initRealtime() {
+    // guard: pastikan fungsi realtime hanya dipanggil setelah auth
+
+    const channel = dbClient
+      .channel("pesanan-realtime")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "pesanan" },
+        async (payload) => {
+          console.log("[Realtime] Pesanan baru:", payload.new);
+
+          const newOrder = payload.new;
+
+          // Tambah ke array lokal di posisi terdepan
+          allOrders.unshift(newOrder);
+
+          // Re-render dengan highlight baris baru
+          renderTable(newOrder.id);
+          updateStats();
+
+          // ── Stok dikurangi otomatis oleh database trigger (lihat setup SQL) ──
+          // Tidak perlu logic kurangi stok manual di sini lagi.
+          // Alasan: jika beberapa dashboard kasir dibuka bersamaan, tiap dashboard
+          // akan menerima event ini dan stok bisa terpotong berkali-kali (race condition).
+          // Trigger di database menjamin pengurangan stok hanya terjadi SEKALI,
+          // tepat saat baris pesanan ter-insert, terlepas dari berapa banyak dashboard yang terbuka.
+
+          // Toast notif
+          const items = Array.isArray(newOrder.items) ? newOrder.items : [];
+          const itemStr = items.map(i => `${i.nama} ×${i.qty}`).join(", ");
+          showToast(
+            `🔔 Pesanan Baru — ${newOrder.nomor_meja}`,
+            `${itemStr} · ${formatRp(newOrder.total_harga)}`
+          );
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "pesanan" },
+        (payload) => {
+          // Sync update status dari luar (misal kasir lain)
+          const updated = payload.new;
+          const idx = allOrders.findIndex(o => o.id === updated.id);
+          if (idx !== -1) allOrders[idx] = updated;
+          renderTable();
+          updateStats();
+        }
+      )
+      .subscribe((status) => {
+        const dot   = document.getElementById("rt-dot");
+        const label = document.getElementById("rt-label");
+
+        if (status === "SUBSCRIBED") {
+          dot.className   = "live";
+          label.textContent = "Live · Realtime";
+          console.log("[Realtime] ✅ Tersambung.");
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          dot.className   = "error";
+          label.textContent = "Koneksi terputus";
+          console.warn("[Realtime] ⚠️ Status:", status);
+        } else {
+          dot.className   = "";
+          label.textContent = "Menghubungkan…";
+        }
+      });
+  }
+
+  /* ════════════════════════════════════════════════════════
+     INIT
+  ════════════════════════════════════════════════════════ */
+  // (realtime & load orders dijalankan setelah auth, lihat IIFE bawah)
+
+
+  // 1. PROTEKSI HALAMAN
+  async function initAdmin() {
+    const { data: { session } } = await dbClient.auth.getSession();
+    if (!session) {
+      window.location.href = "login.html";
+      return false;
+    }
+    console.log("Admin terautentikasi");
+    return true;
+  }
+
+  // logout tombol
+  async function logout() {
+    await dbClient.auth.signOut();
+    window.location.href = "login.html";
+  }
+
+  // 2. LOGIKA CRUD MENU
+  async function loadDataMenu() {
+    const { data, error } = await dbClient.from('menu').select('*').order('created_at', { ascending: false });
+    if (error) return console.error(error);
+    
+    const tbody = document.getElementById('menu-tbody');
+    tbody.innerHTML = '';
+    
+    data.forEach(item => {
+      tbody.innerHTML += `
+        <tr>
+          <td style="padding: 8px; border-bottom: 1px solid var(--border2);">${item.nama}</td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--border2);">${formatRp(item.harga)}</td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--border2);">${item.stok}</td>
+          <td style="padding: 8px; border-bottom: 1px solid var(--border2);">
+            <button onclick="hapusMenu(${item.id}, '${item.model_url}')" style="background: rgba(248,113,113,0.1); color: var(--red); border: 1px solid var(--red); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem;">Hapus</button>
+            <button onclick="editMenu(${item.id})" style="background: rgba(245,200,66,0.10); color: var(--gold); border: 1px solid var(--gold); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem;">Edit</button>
+          </td>
+        </tr>
+      `;
+    });
+  }
+
+  async function editMenu(id) {
+    // Edit nama, harga, deskripsi, dan stok berdasarkan id
+    // Ditampilkan sebagai 1 pop-up sekaligus.
+
+    const { data, error } = await dbClient
+      .from('menu')
+      .select('id, nama, harga, deskripsi, stok, model_url')
+      .eq('id', id)
+      .single();
+
+    if (error) {
+      console.error(error);
+      alert('Gagal mengambil data menu untuk diedit');
+      return;
+    }
+
+    const formHtml = `
+      <div style="text-align:left; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;">
+        <div style="margin-bottom:8px;">
+          <label style="display:block; font-size:12px; color:#bbb; margin-bottom:4px;">Nama</label>
+          <input id="mv-nama" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(245,200,66,0.25); background: rgba(255,255,255,0.05); color:#fff;" value="${String(data.nama ?? '').replace(/"/g, '"')}" />
+        </div>
+        <div style="margin-bottom:8px;">
+          <label style="display:block; font-size:12px; color:#bbb; margin-bottom:4px;">Harga (angka)</label>
+          <input id="mv-harga" type="number" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(245,200,66,0.25); background: rgba(255,255,255,0.05); color:#fff;" value="${String(data.harga ?? 0)}" />
+        </div>
+        <div style="margin-bottom:8px;">
+          <label style="display:block; font-size:12px; color:#bbb; margin-bottom:4px;">Deskripsi</label>
+          <textarea id="mv-desc" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(245,200,66,0.25); background: rgba(255,255,255,0.05); color:#fff; height:90px;">${String(data.deskripsi ?? '').replace(/"/g, '"')}</textarea>
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; color:#bbb; margin-bottom:4px;">Stok (angka >= 0)</label>
+          <input id="mv-stok" type="number" style="width:100%; padding:10px; border-radius:8px; border:1px solid rgba(245,200,66,0.25); background: rgba(255,255,255,0.05); color:#fff;" value="${String(data.stok ?? 0)}" />
+        </div>
+      </div>
+    `;
+
+    // Karena admin.html belum pakai SweetAlert2, pakai prompt berbasis HTML via window.open
+    // Implementasi: gunakan custom modal minimal dengan DOM.
+    const modal = document.createElement('div');
+    modal.setAttribute('role', 'dialog');
+    modal.style.position = 'fixed';
+    modal.style.inset = '0';
+    modal.style.zIndex = '9999';
+    modal.style.background = 'rgba(0,0,0,0.6)';
+    modal.style.display = 'flex';
+    modal.style.alignItems = 'center';
+    modal.style.justifyContent = 'center';
+    modal.innerHTML = `
+      <div style="width:min(520px, 92vw); background:#13131f; border:1px solid rgba(245,200,66,0.25); border-radius:16px; padding:16px; box-shadow: 0 14px 60px rgba(0,0,0,0.6);">
+        <div style="font-weight:800; color:var(--gold); margin-bottom:10px;">Edit Menu</div>
+        ${formHtml}
+        <div style="display:flex; gap:10px; margin-top:14px; justify-content:flex-end;">
+          <button id="mv-cancel" type="button" style="padding:10px 14px; border-radius:10px; border:1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.7); cursor:pointer; font-weight:700;">Batal</button>
+          <button id="mv-save" type="button" style="padding:10px 14px; border-radius:10px; border:none; background: var(--gold); color: var(--deep); cursor:pointer; font-weight:900;">Simpan</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const mvNama = modal.querySelector('#mv-nama');
+    const mvHarga = modal.querySelector('#mv-harga');
+    const mvDesc = modal.querySelector('#mv-desc');
+    const mvStok = modal.querySelector('#mv-stok');
+
+    const btnCancel = modal.querySelector('#mv-cancel');
+    const btnSave = modal.querySelector('#mv-save');
+
+    // close helper
+    const close = () => modal.remove();
+
+    btnCancel.addEventListener('click', () => close());
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) close();
+    });
+
+    return new Promise((resolve) => {
+      btnSave.addEventListener('click', async () => {
+        const newNama = (mvNama.value ?? '').trim();
+        const newHarga = parseInt(mvHarga.value, 10);
+        const newDesc = (mvDesc.value ?? '').trim();
+        const newStok = parseInt(mvStok.value, 10);
+
+        if (!newNama) {
+          alert('Nama tidak boleh kosong');
+          return;
+        }
+        if (Number.isNaN(newHarga) || newHarga < 0) {
+          alert('Harga tidak valid. Gunakan angka >= 0');
+          return;
+        }
+        if (Number.isNaN(newStok) || newStok < 0) {
+          alert('Stok tidak valid. Gunakan angka >= 0');
+          return;
+        }
+
+        try {
+          const { error: updateError } = await dbClient
+            .from('menu')
+            .update({
+              nama: newNama,
+              harga: newHarga,
+              deskripsi: newDesc,
+              stok: newStok,
+            })
+            .eq('id', id);
+
+          if (updateError) throw updateError;
+
+          showToast('Berhasil', 'Menu telah diperbarui.');
+          await loadDataMenu();
+          close();
+          resolve(true);
+        } catch (err) {
+          console.error(err);
+          alert('Gagal update menu: ' + (err.message || err));
+          resolve(false);
+        }
+      });
+    });
+  }
+
+
+
+  async function tambahMenu(e) {
+    e.preventDefault();
+    const btn = document.getElementById('btn-simpan-menu');
+    btn.textContent = "Mengunggah Model...";
+    btn.disabled = true;
+
+    const nama = document.getElementById('m-nama').value;
+    const harga = document.getElementById('m-harga').value;
+    const stok = document.getElementById('m-stok').value;
+    const desc = document.getElementById('m-desc').value;
+    const file = document.getElementById('m-file').files[0];
+
+    try {
+      // Upload file ke Storage Bucket 'model-menu'
+      const fileName = `${Date.now()}_${file.name}`;
+      const { data: uploadData, error: uploadError } = await dbClient.storage
+        .from('model-menu')
+        .upload(fileName, file);
+        
+      if (uploadError) throw uploadError;
+
+      // Dapatkan Public URL
+      const { data: publicUrlData } = dbClient.storage.from('model-menu').getPublicUrl(fileName);
+      const publicUrl = publicUrlData.publicUrl;
+
+      // Insert data ke tabel menu
+      btn.textContent = "Menyimpan Data...";
+      const { error: insertError } = await dbClient.from('menu').insert([{
+        nama: nama,
+        harga: parseInt(harga),
+        stok: parseInt(stok, 10) || 0,
+        deskripsi: desc,
+        model_url: publicUrl,
+        scale: "0.05 0.05 0.05" // Skala default
+      }]);
+
+      if (insertError) throw insertError;
+
+      showToast("Berhasil", "Menu baru telah ditambahkan.");
+      document.getElementById('form-menu').reset();
+      loadDataMenu();
+
+    } catch (err) {
+      console.error(err);
+      alert("Gagal menambahkan menu: " + err.message);
+    } finally {
+      btn.textContent = "Simpan Menu";
+      btn.disabled = false;
+    }
+  }
+
+  async function hapusMenu(id, url) {
+    if(!confirm("Yakin ingin menghapus menu ini?")) return;
+    
+    // Ekstrak nama file dari URL untuk menghapus storage
+    const fileName = url.split('/').pop();
+    
+    // Hapus dari Storage dan Tabel
+    await dbClient.storage.from('model-menu').remove([fileName]);
+    await dbClient.from('menu').delete().eq('id', id);
+    
+    loadDataMenu();
+    showToast("Berhasil", "Menu telah dihapus.");
+  }
+
+  // Panggil fungsi saat inisialisasi
+  (async () => {
+    const ok = await initAdmin();
+    if (!ok) return;
+
+    await loadOrders();
+    loadDataMenu();
+    initRealtime();
+  })();
+
+</script>
+</body>
+</html>
